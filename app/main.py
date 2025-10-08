@@ -153,6 +153,29 @@ async def get_languages():
     return {"languages": languages}
 
 
+# Public contact creation endpoint
+@app.post("/api/contacts", response_model=Contact, status_code=status.HTTP_201_CREATED)
+async def create_contact_public(contact: ContactCreate):
+    """Create a new contact (public endpoint)."""
+    try:
+        return await crud.create_contact(contact)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# Public contact update endpoint
+@app.put("/api/contacts/{contact_id}", response_model=Contact)
+async def update_contact_public(contact_id: str, contact_update: ContactUpdate):
+    """Update a contact (public endpoint)."""
+    try:
+        contact = await crud.update_contact(contact_id, contact_update)
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        return contact
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # Suggestion endpoints (public - sends emails via EmailJS on frontend)
 @app.post("/api/suggestions", status_code=status.HTTP_201_CREATED)
 async def create_suggestion(suggestion: SuggestionCreate):
