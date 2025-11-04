@@ -76,7 +76,8 @@ async def get_contacts(
     exclude_third_party: Optional[bool] = None,
     sort_by: str = "name",
     skip: int = 0,
-    limit: int = 20
+    limit: int = 20,
+    include_pictures: bool = False
 ) -> tuple[List[Contact], int]:
     """Get contacts with filters and pagination."""
     db = get_database()
@@ -86,12 +87,8 @@ async def get_contacts(
     query: Dict[str, Any] = {}
 
     if search:
-        query["$or"] = [
-            {"name": {"$regex": search, "$options": "i"}},
-            {"department": {"$regex": search, "$options": "i"}},
-            {"tags": {"$regex": search, "$options": "i"}},
-            {"designation": {"$regex": search, "$options": "i"}},
-        ]
+        # Use text search for better performance with indexes
+        query["$text"] = {"$search": search}
 
     if tag:
         query["tags"] = {"$regex": tag, "$options": "i"}
@@ -124,14 +121,26 @@ async def get_contacts(
         sort_field = "extension"
         sort_direction = -1  # descending for extension
 
-    # Get contacts
-    cursor = contacts.find(query).sort(sort_field, sort_direction).skip(skip).limit(limit)
-    contact_list = await cursor.to_list(length=limit)
+    # Get contacts (optionally exclude profile_picture for performance)
+    if include_pictures:
+        # Include profile pictures (for admin dashboard)
+        cursor = contacts.find(query).sort(sort_field, sort_direction).skip(skip).limit(limit)
+        contact_list = await cursor.to_list(length=limit)
+        contacts_result = [Contact(id=c["_id"], **{k: v for k, v in c.items() if k != "_id"}) for c in contact_list]
+    else:
+        # Exclude profile pictures for faster loading (public view)
+        projection = {"profile_picture": 0}
+        cursor = contacts.find(query, projection).sort(sort_field, sort_direction).skip(skip).limit(limit)
+        contact_list = await cursor.to_list(length=limit)
 
-    return (
-        [Contact(id=c["_id"], **{k: v for k, v in c.items() if k != "_id"}) for c in contact_list],
-        total
-    )
+        # Convert to Contact objects, ensuring profile_picture is None when excluded
+        contacts_result = []
+        for c in contact_list:
+            contact_dict = {k: v for k, v in c.items() if k != "_id"}
+            contact_dict["profile_picture"] = None  # Set to None since it was excluded
+            contacts_result.append(Contact(id=c["_id"], **contact_dict))
+
+    return (contacts_result, total)
 
 
 async def update_contact(contact_id: str, contact_update: ContactUpdate) -> Optional[Contact]:

@@ -1,9 +1,11 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import timedelta
 from typing import List
 from .config import settings
 from .database import connect_to_mongo, close_mongo_connection
+from .indexes import create_indexes
+from .cloudinary_storage import cloudinary_storage
 from .models import (
     Contact,
     ContactCreate,
@@ -37,6 +39,7 @@ app.add_middleware(
 async def startup_event():
     """Initialize database connection on startup."""
     await connect_to_mongo()
+    await create_indexes()
 
 
 @app.on_event("shutdown")
@@ -99,7 +102,8 @@ async def list_contacts(
     exclude_third_party: bool = None,
     sort_by: str = "name",
     page: int = 1,
-    limit: int = 20
+    limit: int = 20,
+    include_pictures: bool = False
 ):
     """List all contacts with filtering and pagination."""
     skip = (page - 1) * limit
@@ -114,7 +118,8 @@ async def list_contacts(
         exclude_third_party=exclude_third_party,
         sort_by=sort_by,
         skip=skip,
-        limit=limit
+        limit=limit,
+        include_pictures=include_pictures
     )
 
     total_pages = (total + limit - 1) // limit
@@ -252,3 +257,45 @@ async def toggle_third_party(contact_id: str, is_third_party: bool):
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
     return contact
+
+
+@app.post("/api/upload/profile-picture", dependencies=[Depends(get_current_user)])
+async def upload_profile_picture(
+    contact_id: str,
+    file: UploadFile = File(...)
+):
+    """
+    Upload a profile picture to Cloudinary (admin only).
+
+    Args:
+        contact_id: ID of the contact
+        file: Image file to upload
+
+    Returns:
+        JSON with the Cloudinary URL
+    """
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file type. Only images are allowed."
+        )
+
+    # Validate file size (max 5MB)
+    file_content = await file.read()
+    if len(file_content) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail="File too large. Maximum size is 5MB."
+        )
+
+    # Upload to Cloudinary
+    image_url = cloudinary_storage.upload_profile_picture(file_content, contact_id)
+
+    if not image_url:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to upload image to Cloudinary"
+        )
+
+    return {"url": image_url, "message": "Profile picture uploaded successfully"}

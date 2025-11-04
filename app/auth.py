@@ -23,14 +23,20 @@ def get_password_hash(password: str) -> str:
 
 def authenticate_user(username: str, password: str) -> Optional[UserInDB]:
     """Authenticate a user."""
+    print(f"[DEBUG] Login attempt - Username: '{username}', Password length: {len(password)}")
+    print(f"[DEBUG] Expected - Username: '{settings.ADMIN_USERNAME}', Password length: {len(settings.ADMIN_PASSWORD)}")
+
     if username != settings.ADMIN_USERNAME:
+        print(f"[DEBUG] Username mismatch: '{username}' != '{settings.ADMIN_USERNAME}'")
         return None
 
     # Simple password comparison for development
     # In production, you should use pre-hashed passwords stored securely
     if password != settings.ADMIN_PASSWORD:
+        print(f"[DEBUG] Password mismatch")
         return None
 
+    print(f"[DEBUG] Authentication successful for user: {username}")
     # Return user with a dummy hash (not used for authentication in dev mode)
     return UserInDB(username=username, hashed_password="dummy_hash_not_used_in_dev")
 
