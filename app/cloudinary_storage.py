@@ -1,5 +1,6 @@
 """Cloudinary storage service for profile pictures."""
 
+import io
 import cloudinary
 import cloudinary.uploader
 from typing import Optional
@@ -51,9 +52,12 @@ class CloudinaryStorage:
             return None
 
         try:
+            # Convert bytes to file-like object for Cloudinary
+            file_like = io.BytesIO(file_content)
+
             # Upload to Cloudinary with transformations
             result = cloudinary.uploader.upload(
-                file_content,
+                file_like,
                 folder="telbook/profile-pictures",
                 public_id=f"contact_{contact_id}",
                 overwrite=True,
