@@ -32,12 +32,6 @@ async def create_contact(contact: ContactCreate) -> Contact:
     db = get_database()
     contacts = db.contacts
 
-    # Check for duplicate email if email is provided
-    if contact.email:
-        existing_contact = await contacts.find_one({"email": contact.email})
-        if existing_contact:
-            raise ValueError(f"A contact with email '{contact.email}' already exists")
-
     contact_id = await get_next_contact_id()
     now = datetime.utcnow()
 
@@ -152,15 +146,6 @@ async def update_contact(contact_id: str, contact_update: ContactUpdate) -> Opti
     existing = await contacts.find_one({"_id": contact_id})
     if not existing:
         return None
-
-    # Check for duplicate email if email is being updated
-    if contact_update.email:
-        duplicate = await contacts.find_one({
-            "email": contact_update.email,
-            "_id": {"$ne": contact_id}  # Exclude current contact
-        })
-        if duplicate:
-            raise ValueError(f"A contact with email '{contact_update.email}' already exists")
 
     # Build update dict
     update_dict = contact_update.model_dump(exclude_unset=True)
