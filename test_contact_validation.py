@@ -3,10 +3,11 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import ValidationError
 from app.models import Contact
 from datetime import datetime
+from app.config import settings
 
-# MongoDB connection string
-MONGODB_URI = "mongodb+srv://navansami_db_user:fairmont100@cluster0.frkrxj0.mongodb.net/"
-DATABASE_NAME = "telbook"
+# MongoDB connection from settings
+MONGODB_URI = settings.MONGODB_URI
+DATABASE_NAME = settings.DATABASE_NAME
 COLLECTION_NAME = "contacts"
 
 async def test_contact_validation():

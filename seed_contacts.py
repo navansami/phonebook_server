@@ -2,10 +2,11 @@ import json
 import asyncio
 from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
+from app.config import settings
 
-# MongoDB connection string
-MONGODB_URI = "mongodb+srv://navansami_db_user:fairmont100@cluster0.frkrxj0.mongodb.net/"
-DATABASE_NAME = "telbook"
+# MongoDB connection from settings
+MONGODB_URI = settings.MONGODB_URI
+DATABASE_NAME = settings.DATABASE_NAME
 COLLECTION_NAME = "contacts"
 
 async def seed_contacts():

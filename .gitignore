@@ -44,3 +44,11 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Utility/Test Scripts (may contain sensitive data during development)
+verify_data.py
+seed_contacts.py
+check_duplicate_emails.py
+simple_validation_test.py
+find_and_fix_validation_issues.py
+test_contact_validation.py
