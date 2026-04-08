@@ -14,7 +14,12 @@ from .models import (
     Token,
     LoginRequest,
     User,
-    SuggestionCreate
+    SuggestionCreate,
+    TaxonomyInventory,
+    TaxonomyCreateRequest,
+    TaxonomyRenameRequest,
+    TaxonomyDeleteRequest,
+    TaxonomyMutationResult,
 )
 from . import crud
 from .auth import authenticate_user, create_access_token, get_current_user
@@ -257,6 +262,56 @@ async def toggle_third_party(contact_id: str, is_third_party: bool):
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
     return contact
+
+
+@app.get("/api/admin/taxonomy/{taxonomy_type}", response_model=TaxonomyInventory, dependencies=[Depends(get_current_user)])
+async def get_taxonomy_inventory(taxonomy_type: str):
+    """Get taxonomy inventory with usage counts and samples."""
+    try:
+        items = await crud.get_taxonomy_inventory(taxonomy_type)
+        return {"taxonomy_type": taxonomy_type, "items": items}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/admin/taxonomy/{taxonomy_type}", response_model=TaxonomyMutationResult, dependencies=[Depends(get_current_user)])
+async def create_taxonomy_value(taxonomy_type: str, payload: TaxonomyCreateRequest):
+    """Create a standalone taxonomy value."""
+    try:
+        await crud.create_taxonomy_value(taxonomy_type, payload.name)
+        return {"message": "Taxonomy value created successfully", "updated_contacts": 0}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.patch("/api/admin/taxonomy/{taxonomy_type}", response_model=TaxonomyMutationResult, dependencies=[Depends(get_current_user)])
+async def rename_taxonomy_value(taxonomy_type: str, payload: TaxonomyRenameRequest):
+    """Rename a taxonomy value and update contacts."""
+    try:
+        updated_contacts = await crud.rename_taxonomy_value(taxonomy_type, payload.current_name, payload.new_name)
+        return {
+            "message": "Taxonomy value updated successfully",
+            "updated_contacts": updated_contacts,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/admin/taxonomy/{taxonomy_type}", response_model=TaxonomyMutationResult, dependencies=[Depends(get_current_user)])
+async def delete_taxonomy_value(taxonomy_type: str, payload: TaxonomyDeleteRequest):
+    """Delete a taxonomy value, optionally replacing it in all contacts."""
+    try:
+        updated_contacts = await crud.delete_taxonomy_value(
+            taxonomy_type,
+            payload.name,
+            payload.replacement_name,
+        )
+        return {
+            "message": "Taxonomy value removed successfully",
+            "updated_contacts": updated_contacts,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/upload/profile-picture", dependencies=[Depends(get_current_user)])

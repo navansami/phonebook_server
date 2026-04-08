@@ -132,3 +132,33 @@ class FilterParams(BaseModel):
     sort_by: Optional[str] = Field(default="name", pattern="^(name|department|extension)$")
     page: int = Field(default=1, ge=1)
     limit: int = Field(default=20, ge=1, le=100)
+
+
+class TaxonomyValue(BaseModel):
+    name: str
+    count: int = 0
+    samples: List[str] = Field(default_factory=list)
+
+
+class TaxonomyInventory(BaseModel):
+    taxonomy_type: str
+    items: List[TaxonomyValue]
+
+
+class TaxonomyCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+
+
+class TaxonomyRenameRequest(BaseModel):
+    current_name: str = Field(..., min_length=1, max_length=200)
+    new_name: str = Field(..., min_length=1, max_length=200)
+
+
+class TaxonomyDeleteRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    replacement_name: Optional[str] = Field(None, max_length=200)
+
+
+class TaxonomyMutationResult(BaseModel):
+    message: str
+    updated_contacts: int = 0

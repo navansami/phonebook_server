@@ -7,6 +7,7 @@ async def create_indexes():
     """Create all necessary indexes for optimal query performance."""
     db = get_database()
     contacts = db.contacts
+    taxonomy_values = db.taxonomy_values
 
     # Create indexes for frequently queried fields
     await contacts.create_index("name")
@@ -30,5 +31,8 @@ async def create_indexes():
         ("designation", "text"),
         ("tags", "text")
     ])
+
+    await taxonomy_values.create_index([("type", 1), ("normalized_name", 1)], unique=True)
+    await taxonomy_values.create_index("type")
 
     print("[OK] Database indexes created successfully")

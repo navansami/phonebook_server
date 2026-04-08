@@ -1,7 +1,27 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Callable
 from datetime import datetime
 from .database import get_database
-from .models import ContactCreate, ContactUpdate, Contact
+from .models import ContactCreate, ContactUpdate, Contact, TaxonomyValue
+
+TAXONOMY_CONFIG: Dict[str, Dict[str, str]] = {
+    "departments": {"field": "department", "kind": "scalar"},
+    "companies": {"field": "company", "kind": "scalar"},
+    "designations": {"field": "designation", "kind": "scalar"},
+    "tags": {"field": "tags", "kind": "array"},
+    "languages": {"field": "languages", "kind": "array"},
+}
+
+
+def normalize_taxonomy_value(value: str) -> str:
+    """Normalize taxonomy values for consistent matching."""
+    return " ".join(value.split()).strip()
+
+
+def get_taxonomy_config(taxonomy_type: str) -> Dict[str, str]:
+    config = TAXONOMY_CONFIG.get(taxonomy_type)
+    if not config:
+        raise ValueError("Unsupported taxonomy type")
+    return config
 
 
 async def get_next_contact_id() -> str:
@@ -207,3 +227,178 @@ async def get_all_languages() -> List[str]:
     all_languages.discard("English")
 
     return sorted(list(all_languages))
+
+
+async def get_taxonomy_inventory(taxonomy_type: str) -> List[TaxonomyValue]:
+    """Get live taxonomy inventory with stored values and contact usage."""
+    config = get_taxonomy_config(taxonomy_type)
+    db = get_database()
+    contacts = db.contacts
+    taxonomy_values = db.taxonomy_values
+
+    counts: Dict[str, int] = {}
+    display_names: Dict[str, str] = {}
+    samples: Dict[str, List[str]] = {}
+
+    cursor = contacts.find({}, {"name": 1, config["field"]: 1})
+    async for contact in cursor:
+      raw_value = contact.get(config["field"])
+      raw_values = raw_value if config["kind"] == "array" and isinstance(raw_value, list) else [raw_value]
+      for value in raw_values:
+          if not value:
+              continue
+          normalized = normalize_taxonomy_value(value)
+          if not normalized:
+              continue
+          counts[normalized] = counts.get(normalized, 0) + 1
+          display_names.setdefault(normalized, value)
+          samples.setdefault(normalized, [])
+          contact_name = contact.get("name")
+          if contact_name and len(samples[normalized]) < 3 and contact_name not in samples[normalized]:
+              samples[normalized].append(contact_name)
+
+    stored_cursor = taxonomy_values.find({"type": taxonomy_type}, {"name": 1, "normalized_name": 1})
+    async for stored in stored_cursor:
+        normalized = stored.get("normalized_name") or normalize_taxonomy_value(stored.get("name", ""))
+        if not normalized:
+            continue
+        display_names.setdefault(normalized, stored.get("name", normalized))
+        counts.setdefault(normalized, 0)
+        samples.setdefault(normalized, [])
+
+    items = [
+        TaxonomyValue(name=display_names[normalized], count=counts[normalized], samples=samples[normalized])
+        for normalized in counts.keys()
+    ]
+    items.sort(key=lambda item: (-item.count, item.name.lower()))
+    return items
+
+
+async def create_taxonomy_value(taxonomy_type: str, name: str) -> None:
+    """Create a standalone taxonomy value."""
+    normalized_name = normalize_taxonomy_value(name)
+    if not normalized_name:
+        raise ValueError("Name cannot be empty")
+
+    get_taxonomy_config(taxonomy_type)
+    db = get_database()
+    taxonomy_values = db.taxonomy_values
+    now = datetime.utcnow()
+
+    await taxonomy_values.update_one(
+        {"type": taxonomy_type, "normalized_name": normalized_name.casefold()},
+        {
+            "$set": {
+                "type": taxonomy_type,
+                "name": normalized_name,
+                "normalized_name": normalized_name.casefold(),
+                "updated_at": now,
+            },
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )
+
+
+async def _update_contacts_for_taxonomy(
+    taxonomy_type: str,
+    current_name: str,
+    new_name: Optional[str] = None,
+) -> int:
+    """Rename or remove a taxonomy value across contacts."""
+    config = get_taxonomy_config(taxonomy_type)
+    db = get_database()
+    contacts = db.contacts
+    current_normalized = normalize_taxonomy_value(current_name).casefold()
+    replacement = normalize_taxonomy_value(new_name) if new_name else None
+    updated_count = 0
+
+    cursor = contacts.find({}, {"_id": 1, config["field"]: 1})
+    async for contact in cursor:
+        current_value = contact.get(config["field"])
+        should_update = False
+
+        if config["kind"] == "scalar":
+            if current_value and normalize_taxonomy_value(current_value).casefold() == current_normalized:
+                next_value = replacement
+                should_update = True
+            else:
+                continue
+        else:
+            values = current_value if isinstance(current_value, list) else []
+            next_values: List[str] = []
+            seen = set()
+            for value in values:
+                candidate = replacement if normalize_taxonomy_value(value).casefold() == current_normalized else value
+                if not candidate:
+                    continue
+                normalized_candidate = normalize_taxonomy_value(candidate).casefold()
+                if normalized_candidate in seen:
+                    continue
+                seen.add(normalized_candidate)
+                next_values.append(normalize_taxonomy_value(candidate))
+            if next_values != values:
+                next_value = next_values
+                should_update = True
+            else:
+                continue
+
+        if should_update:
+            await contacts.update_one(
+                {"_id": contact["_id"]},
+                {"$set": {config["field"]: next_value, "updated_at": datetime.utcnow()}},
+            )
+            updated_count += 1
+
+    return updated_count
+
+
+async def rename_taxonomy_value(taxonomy_type: str, current_name: str, new_name: str) -> int:
+    """Rename a taxonomy value and update all matching contacts."""
+    current_normalized = normalize_taxonomy_value(current_name)
+    next_normalized = normalize_taxonomy_value(new_name)
+    if not current_normalized or not next_normalized:
+        raise ValueError("Both current and new names are required")
+
+    await create_taxonomy_value(taxonomy_type, next_normalized)
+    updated_contacts = await _update_contacts_for_taxonomy(taxonomy_type, current_normalized, next_normalized)
+
+    db = get_database()
+    await db.taxonomy_values.delete_one(
+        {"type": taxonomy_type, "normalized_name": current_normalized.casefold()}
+    )
+
+    return updated_contacts
+
+
+async def delete_taxonomy_value(
+    taxonomy_type: str,
+    name: str,
+    replacement_name: Optional[str] = None,
+) -> int:
+    """Delete a taxonomy value, optionally replacing it in all contacts first."""
+    normalized_name = normalize_taxonomy_value(name)
+    if not normalized_name:
+        raise ValueError("Name is required")
+
+    inventory = await get_taxonomy_inventory(taxonomy_type)
+    current_item = next(
+        (item for item in inventory if normalize_taxonomy_value(item.name).casefold() == normalized_name.casefold()),
+        None,
+    )
+    usage_count = current_item.count if current_item else 0
+
+    updated_contacts = 0
+    if usage_count > 0:
+        if not replacement_name or not normalize_taxonomy_value(replacement_name):
+            raise ValueError("Replacement name is required for values currently used by contacts")
+        replacement_normalized = normalize_taxonomy_value(replacement_name)
+        await create_taxonomy_value(taxonomy_type, replacement_normalized)
+        updated_contacts = await _update_contacts_for_taxonomy(taxonomy_type, normalized_name, replacement_normalized)
+
+    db = get_database()
+    await db.taxonomy_values.delete_one(
+        {"type": taxonomy_type, "normalized_name": normalized_name.casefold()}
+    )
+
+    return updated_contacts
