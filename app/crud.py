@@ -157,6 +157,33 @@ async def get_contacts(
     return (contacts_result, total)
 
 
+async def get_contacts_for_export(
+    search: Optional[str] = None,
+    tag: Optional[str] = None,
+    language: Optional[str] = None,
+    is_ert: Optional[bool] = None,
+    is_ifa: Optional[bool] = None,
+    is_third_party: Optional[bool] = None,
+    exclude_third_party: Optional[bool] = None,
+    sort_by: str = "name",
+) -> List[Contact]:
+    """Get all contacts matching the given filters for export."""
+    contacts, _ = await get_contacts(
+        search=search,
+        tag=tag,
+        language=language,
+        is_ert=is_ert,
+        is_ifa=is_ifa,
+        is_third_party=is_third_party,
+        exclude_third_party=exclude_third_party,
+        sort_by=sort_by,
+        skip=0,
+        limit=10000,
+        include_pictures=True,
+    )
+    return contacts
+
+
 async def update_contact(contact_id: str, contact_update: ContactUpdate) -> Optional[Contact]:
     """Update a contact."""
     db = get_database()

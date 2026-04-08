@@ -1,7 +1,10 @@
 from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from datetime import timedelta
 from typing import List
+import csv
+import io
 from .config import settings
 from .database import connect_to_mongo, close_mongo_connection
 from .indexes import create_indexes
@@ -25,6 +28,39 @@ from .models import (
 )
 from . import crud
 from .auth import authenticate_user, create_access_token, get_current_user
+
+CSV_EXPORT_FIELDS = [
+    "name",
+    "extension",
+    "company",
+    "department",
+    "designation",
+    "mobile",
+    "landline",
+    "email",
+    "website",
+    "languages",
+    "tags",
+    "comments",
+    "expose",
+    "is_ert",
+    "is_ifa",
+    "is_third_party",
+]
+
+
+def parse_csv_bool(value: str, default: bool = False) -> bool:
+    """Parse common CSV boolean string values."""
+    if value is None or value == "":
+        return default
+    return str(value).strip().lower() in {"true", "1", "yes", "y", "on"}
+
+
+def parse_csv_list(value: str) -> List[str]:
+    """Parse comma-separated CSV cell values into a list."""
+    if not value:
+        return []
+    return [item.strip() for item in str(value).split(",") if item.strip()]
 
 app = FastAPI(
     title="Telbook API",
@@ -277,6 +313,134 @@ async def toggle_third_party(contact_id: str, is_third_party: bool):
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
     return contact
+
+
+@app.get("/api/admin/contacts/export", dependencies=[Depends(get_current_user)])
+async def export_contacts_csv(
+    search: str = None,
+    tag: str = None,
+    language: str = None,
+    is_ert: bool = None,
+    is_ifa: bool = None,
+    is_third_party: bool = None,
+    exclude_third_party: bool = None,
+    sort_by: str = "name",
+):
+    """Export contacts to CSV."""
+    contacts = await crud.get_contacts_for_export(
+        search=search,
+        tag=tag,
+        language=language,
+        is_ert=is_ert,
+        is_ifa=is_ifa,
+        is_third_party=is_third_party,
+        exclude_third_party=exclude_third_party,
+        sort_by=sort_by,
+    )
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=CSV_EXPORT_FIELDS)
+    writer.writeheader()
+
+    for contact in contacts:
+        writer.writerow({
+            "name": contact.name,
+            "extension": contact.extension or "",
+            "company": contact.company or "",
+            "department": contact.department or "",
+            "designation": contact.designation or "",
+            "mobile": contact.mobile or "",
+            "landline": contact.landline or "",
+            "email": contact.email or "",
+            "website": contact.website or "",
+            "languages": ", ".join(contact.languages or []),
+            "tags": ", ".join(contact.tags or []),
+            "comments": contact.comments or "",
+            "expose": str(contact.expose).lower(),
+            "is_ert": str(contact.is_ert).lower(),
+            "is_ifa": str(contact.is_ifa).lower(),
+            "is_third_party": str(contact.is_third_party).lower(),
+        })
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=phonebook_contacts.csv"},
+    )
+
+
+@app.post("/api/admin/contacts/import", dependencies=[Depends(get_current_user)])
+async def import_contacts_csv(file: UploadFile = File(...), apply_changes: bool = False):
+    """Preview or import contacts from a CSV file."""
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Please upload a CSV file")
+
+    content = await file.read()
+    try:
+        decoded = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded")
+
+    reader = csv.DictReader(io.StringIO(decoded))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV file is missing a header row")
+
+    rows = list(reader)
+    preview_rows = []
+    errors = []
+    created_count = 0
+
+    for index, row in enumerate(rows, start=2):
+        normalized_row = {key.strip(): (value or "").strip() for key, value in row.items() if key}
+        name = normalized_row.get("name", "")
+        if not name:
+            errors.append({"row": index, "message": "Name is required"})
+            continue
+
+        try:
+            contact = ContactCreate(
+                name=name,
+                extension=normalized_row.get("extension") or None,
+                company=normalized_row.get("company") or None,
+                department=normalized_row.get("department") or None,
+                designation=normalized_row.get("designation") or None,
+                mobile=normalized_row.get("mobile") or None,
+                landline=normalized_row.get("landline") or None,
+                email=normalized_row.get("email") or None,
+                website=normalized_row.get("website") or None,
+                languages=parse_csv_list(normalized_row.get("languages", "")),
+                tags=parse_csv_list(normalized_row.get("tags", "")),
+                comments=normalized_row.get("comments") or None,
+                expose=parse_csv_bool(normalized_row.get("expose"), True),
+                is_ert=parse_csv_bool(normalized_row.get("is_ert"), False),
+                is_ifa=parse_csv_bool(normalized_row.get("is_ifa"), False),
+                is_third_party=parse_csv_bool(normalized_row.get("is_third_party"), False),
+            )
+        except Exception as exc:
+            errors.append({"row": index, "message": str(exc)})
+            continue
+
+        preview_rows.append({
+            "row": index,
+            "name": contact.name,
+            "department": contact.department,
+            "designation": contact.designation,
+            "company": contact.company,
+        })
+
+        if apply_changes:
+            await crud.create_contact(contact)
+            created_count += 1
+
+    return {
+        "apply_changes": apply_changes,
+        "total_rows": len(rows),
+        "valid_rows": len(preview_rows),
+        "created_count": created_count,
+        "errors": errors,
+        "preview": preview_rows[:20],
+    }
 
 
 @app.get("/api/admin/taxonomy/{taxonomy_type}", response_model=TaxonomyInventory, dependencies=[Depends(get_current_user)])
