@@ -162,3 +162,13 @@ class TaxonomyDeleteRequest(BaseModel):
 class TaxonomyMutationResult(BaseModel):
     message: str
     updated_contacts: int = 0
+
+
+class BulkContactUpdateRequest(BaseModel):
+    contact_ids: List[str] = Field(..., min_length=1)
+    updates: ContactUpdate
+
+
+class BulkContactUpdateResult(BaseModel):
+    message: str
+    updated_contacts: int

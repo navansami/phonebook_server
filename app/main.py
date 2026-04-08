@@ -20,6 +20,8 @@ from .models import (
     TaxonomyRenameRequest,
     TaxonomyDeleteRequest,
     TaxonomyMutationResult,
+    BulkContactUpdateRequest,
+    BulkContactUpdateResult,
 )
 from . import crud
 from .auth import authenticate_user, create_access_token, get_current_user
@@ -226,6 +228,19 @@ async def delete_contact(contact_id: str):
     if not success:
         raise HTTPException(status_code=404, detail="Contact not found")
     return {"message": "Contact deleted successfully"}
+
+
+@app.patch("/api/admin/contacts/bulk", response_model=BulkContactUpdateResult, dependencies=[Depends(get_current_user)])
+async def bulk_update_contacts(payload: BulkContactUpdateRequest):
+    """Bulk update contacts (admin only)."""
+    try:
+        updated_contacts = await crud.bulk_update_contacts(payload.contact_ids, payload.updates)
+        return {
+            "message": "Contacts updated successfully",
+            "updated_contacts": updated_contacts,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.patch("/api/admin/contacts/{contact_id}/ert", response_model=Contact, dependencies=[Depends(get_current_user)])

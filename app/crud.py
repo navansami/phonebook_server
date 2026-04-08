@@ -194,6 +194,23 @@ async def delete_contact(contact_id: str) -> bool:
     return result.deleted_count > 0
 
 
+async def bulk_update_contacts(contact_ids: List[str], contact_update: ContactUpdate) -> int:
+    """Bulk update multiple contacts."""
+    db = get_database()
+    contacts = db.contacts
+
+    update_dict = contact_update.model_dump(exclude_unset=True)
+    if not update_dict:
+        raise ValueError("No updates provided")
+
+    update_dict["updated_at"] = datetime.utcnow()
+    result = await contacts.update_many(
+        {"_id": {"$in": contact_ids}},
+        {"$set": update_dict},
+    )
+    return result.modified_count
+
+
 async def get_all_tags() -> List[str]:
     """Get all unique tags."""
     db = get_database()
